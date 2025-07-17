@@ -4,9 +4,9 @@ from core.stt.whisper import Whisper
 def main():
     prompt = "Transcribe el audio data/MicroMachines.mp3"
 
-    susu = SusuRo()
+    susu = SusuRo(whisper_model_size="tiny")
 
-    messages = susu.invoke(prompt)
+    messages = susu(prompt)
     
     for message in messages:
         message.pretty_print()
