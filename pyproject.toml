@@ -1,0 +1,14 @@
+[project]
+name = "susu-ro"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "grandalf>=0.8",
+    "langchain-groq>=0.3.6",
+    "langchain-ollama>=0.3.5",
+    "langgraph>=0.5.3",
+    "openai-whisper>=20250625",
+    "typing-extensions>=4.14.1",
+]
