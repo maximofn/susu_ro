@@ -99,6 +99,13 @@ class SusuRo():
             print(self.graph.get_graph().draw_ascii())
         except Exception as e:
             print(f"Error al visualizar el grafo: {e}")
+        
+        # Save the graph as PNG
+        try:
+            self.graph.get_graph().draw_mermaid_png(output_file_path="susu_ro_graph.png")
+            print("Graph saved as 'susu_ro_graph.png'")
+        except Exception as e:
+            print(f"Error al guardar el grafo como PNG: {e}")
     
     # Functions
     @traceable(run_type="llm")
