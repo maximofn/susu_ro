@@ -37,7 +37,7 @@ class State(TypedDict):
     first_message: Annotated[bool, True]
 
 class SusuRo():
-    def __init__(self, chat_model: str = "qwen3:4b", chat_reasoning: bool = False, whisper_model_size: str = "large", whisper_device: str = "cpu", enable_streaming: bool = True) -> None:
+    def __init__(self, chat_model: str = "qwen3:8b", chat_reasoning: bool = False, whisper_model_size: str = "large", whisper_device: str = "cpu", enable_streaming: bool = True) -> None:
         """
         Initialize the SusuRo agent.
 
