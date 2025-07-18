@@ -34,10 +34,10 @@ class State(TypedDict):
     """
     messages: Annotated[list, add_messages]
     transcription: Annotated[str, ""]
-    first_message: True
+    first_message: Annotated[bool, True]
 
 class SusuRo():
-    def __init__(self, chat_model: str = "qwen3:4b", chat_reasoning: bool = False, whisper_model_size: str = "large", whisper_device: str = "cpu") -> None:
+    def __init__(self, chat_model: str = "qwen3:4b", chat_reasoning: bool = False, whisper_model_size: str = "large", whisper_device: str = "cpu", enable_streaming: bool = True) -> None:
         """
         Initialize the SusuRo agent.
 
@@ -46,12 +46,16 @@ class SusuRo():
             chat_reasoning (bool, optional): Whether to use reasoning for the chat. Defaults to False.
             whisper_model_size (str, optional): The size of the Whisper model. Defaults to "large".
             whisper_device (str, optional): The device to use for the Whisper model. Defaults to "cpu".
+            enable_streaming (bool, optional): Whether to enable streaming of tokens. Defaults to True.
 
         Returns:
             None
         """
         # Create llm model
         self.llm = ChatOllama(model=chat_model, reasoning=chat_reasoning)
+        
+        # Enable streaming
+        self.enable_streaming = enable_streaming
 
         # Create the stt model
         self.stt = Whisper(model_size=whisper_model_size, device=whisper_device)
@@ -110,6 +114,60 @@ class SusuRo():
             print(f"Error al guardar el grafo como PNG: {e}")
     
     # Functions
+    def print_initial_debug_block(self) -> None:
+        """
+        Print the state of the agent.
+        """
+        print("\n\n")
+        print("+" * 100)
+    
+    def print_end_debug_block(self) -> None:
+        """
+        Print the end of the debug block.
+        """
+        print("-" * 100)
+    
+    @traceable(run_type="llm")
+    def stream_llm_response(self, messages: list, use_tools: bool = False, function_name: str = None) -> str:
+        """
+        Stream LLM response with real-time token display.
+        
+        Args:
+            messages: List of messages to send to the LLM
+            use_tools: Whether to use tools (disables streaming)
+            function_name: Optional name to display in debug output
+            
+        Returns:
+            str or AIMessage: Complete response content or full message object if tools used
+        """
+        if not self.enable_streaming or use_tools:
+            # Fallback to normal invocation when streaming disabled or tools needed
+            llm = self.transcriptor if use_tools else self.llm
+            response = llm.invoke(messages)
+            return response if use_tools else response.content
+        
+        # Streaming enabled
+        if function_name:
+            print(f"\t[{function_name}]\tresponse: ", end="", flush=True)
+        else:
+            print("\tresponse: ", end="", flush=True)
+        full_response = ""
+        
+        try:
+            for chunk in self.llm.stream(messages):
+                content = chunk.content
+                if content:
+                    print(content, end="", flush=True)
+                    full_response += content
+        except Exception as e:
+            print(f"\n❌ Streaming error: {e}")
+            # Fallback to normal invocation
+            response = llm.invoke(messages)
+            return response.content
+        
+        print()  # New line after streaming
+        return full_response
+    
     @traceable(run_type="llm")
     def transcriptor_function(self, state: State) -> State:
         """
@@ -140,11 +198,8 @@ class SusuRo():
         # Check if the last message is from a tool (ToolMessage) or from evaluator
         last_message = input_messages[-1]
         is_from_tool = hasattr(last_message, 'tool_call_id')
-        print("\n\n")
-        print("+" * 100)
-        print(f"\n\t[transcriptor_function] [state] last_message: {last_message}\n")
-        print(f"\n\t[transcriptor_function] [state] transcription: {transcription}\n")
-        print(f"\n\t[transcriptor_function] is_from_tool: {is_from_tool}\n")
+        self.print_initial_debug_block()
+        print(f"\t[transcriptor_function] is_from_tool: {is_from_tool}")
         
         if is_from_tool:
             # If coming from tool, store transcription separately from logic
@@ -161,15 +216,13 @@ When you receive a transcription result from the transcribe tool, you must:
 Focus on the analytical and contextual aspects of the transcription work.""")
             
             messages_with_system = [literal_prompt] + input_messages
-            response = self.transcriptor.invoke(messages_with_system)
-            print(f"\n\t[transcriptor_function]\tresponse: {response}\n")
-            print(f"\n\t[transcriptor_function] [state] transcription: {transcription_result}\n")
-            print("-" * 100)
+            response = self.stream_llm_response(messages_with_system, use_tools=False, function_name="transcriptor_function")
+            self.print_end_debug_block()
             return {"messages": [response], "transcription": transcription_result, "first_message": False}
         else:
             # Check if this is the initial request to transcribe audio
             is_first_message = state["first_message"]
-            print(f"\n\t[transcriptor_function] [state] is first message: {is_first_message}\n")
+            print(f"\t[transcriptor_function] [state] is first message: {is_first_message}")
             if is_first_message:
                 # This is an initial transcription request, use the transcriptor with tools
                 system_prompt = SystemMessage(content="""You are an audio transcriptor with access to transcription tools. When asked to transcribe audio, you must use the transcribe tool with the provided audio file path.
@@ -182,9 +235,8 @@ When you receive a request to transcribe audio:
 Use the transcribe tool now.""")
                 
                 messages_with_system = [system_prompt] + input_messages
-                response = self.transcriptor.invoke(messages_with_system)
-                print(f"\n\t[transcriptor_function]\tresponse: {response}\n")
-                print("-" * 100)
+                response = self.stream_llm_response(messages_with_system, use_tools=True, function_name="transcriptor_function")
+                self.print_end_debug_block()
                 return {"messages": [response], "transcription": transcription, "first_message": False}
             else:
                 # If coming from evaluator (retry), perform context-aware correction
@@ -203,11 +255,12 @@ Focus on the analytical and methodological aspects of transcription improvement.
                 corrected_transcription = self._apply_transcription_corrections(transcription)
                 
                 messages_with_system = [correction_prompt] + input_messages
-                response = self.llm.invoke(messages_with_system)
-                print(f"\n\t[transcriptor_function]\tresponse: {response}\n")
-                print("-" * 100)
+                response_content = self.stream_llm_response(messages_with_system, use_tools=False, function_name="transcriptor_function")
+                response = type(input_messages[-1])(content=response_content)
+                self.print_end_debug_block()
                 return {"messages": [response], "transcription": corrected_transcription, "first_message": False}
     
+    @traceable(run_type="llm")
     def _apply_transcription_corrections(self, transcription: str) -> str:
         """
         Apply context-aware corrections to transcription text using LLM.
@@ -243,15 +296,9 @@ Instructions:
 Return ONLY the corrected transcription text, nothing else."""
         
         correction_message = HumanMessage(content=correction_prompt)
-        response = self.llm.invoke([correction_message])
+        response_content = self.stream_llm_response([correction_message], use_tools=False, function_name="apply_transcription_corrections")
 
-        print("\n\n")
-        print("+" * 100)
-        print(f"\n\t[apply_transcription_corrections] [state] transcription: {transcription}\n")
-        print(f"\n\t[apply_transcription_corrections] [state] response: {response.content.strip()}\n")
-        print("-" * 100)
-        
-        return response.content.strip()
+        return response_content.strip()
     
     @traceable(run_type="llm")
     def evaluator_function(self, state: State) -> State:
@@ -313,14 +360,9 @@ Your response should focus on the analytical and methodological aspects of trans
 
 At the end of your analysis, provide your evaluation as either "GOOD" or "RETRY".""")
         
-        input_messages = state["messages"]
-        last_message = input_messages[-1]
         transcription = state["transcription"]
 
-        print("\n\n")
-        print("+" * 100)
-        print(f"\n\t[evaluator_function] [state] last_message: {last_message}\n")
-        print(f"\n\t[evaluator_function] [state] transcription: {transcription}\n")
+        self.print_initial_debug_block()
         
         # Create evaluation prompt that includes the transcription for analysis
         evaluation_prompt = HumanMessage(content=f"""Please evaluate the following transcription:
@@ -331,15 +373,19 @@ Provide your analytical assessment of the transcription quality.""")
         
         # Add system prompt and evaluation prompt
         messages_with_system = [evaluator_system_prompt, evaluation_prompt]
-        response = self.llm.invoke(messages_with_system)
-        print(f"\n\t[evaluator_function]\tresponse: {response}\n")
-        print("-" * 100)
+        response_content = self.stream_llm_response(messages_with_system, use_tools=False, function_name="evaluator_function")
+        response = type(evaluation_prompt)(content=response_content)
+        self.print_end_debug_block()
         return {"messages": [response], "transcription": transcription, "first_message": False}
     
     @traceable(run_type="llm")
     def evaluator_decision(self, state: State) -> str:
         """
         Function to determine if the transcription is good or needs retry.
+        
+        Analyzes the evaluator's response to determine the next action.
+        Returns "good" if the response contains "GOOD", "retry" if it contains "RETRY",
+        or defaults to "retry" if the response is unclear.
         
         Args:
             state (State): The state of the agent.
@@ -349,15 +395,10 @@ Provide your analytical assessment of the transcription quality.""")
         """
         last_message = state["messages"][-1]
         response_content = last_message.content.strip().upper()
-        transcription = state["transcription"]
 
-        print("\n\n")
-        print("+" * 100)
-        print(f"\n\t[evaluator_decision] [state] last_message: {last_message}\n")
-        print(f"\n\t[evaluator_decision] [state] response_content: {response_content}\n")
-        print(f"\n\t[evaluator_decision] [state] transcription: {transcription}\n")
-        print(f"\n\t[evaluator_decision] return: good") if "GOOD" in response_content else print(f"\n\t[evaluator_decision] return: retry")
-        print("-" * 100)
+        self.print_initial_debug_block()
+        print(f"\t[evaluator_decision] return: good") if "GOOD" in response_content else print(f"\t[evaluator_decision] return: retry")
+        self.print_end_debug_block()
         
         if "GOOD" in response_content:
             return "good"
@@ -381,11 +422,10 @@ Provide your analytical assessment of the transcription quality.""")
         """
         transcription = self.stt.transcribe(audio_path, language)
         
-        print("\n\n")
-        print("+" * 100)
-        print(f"\n\t[stt_function] audio_path: {audio_path}\n")
-        print(f"\n\t[stt_function] transcription: {transcription}\n")
-        print("-" * 100)
+        self.print_initial_debug_block()
+        print(f"\t[stt_function] audio_path: {audio_path}")
+        print(f"\t[stt_function] transcription: {transcription}")
+        self.print_end_debug_block()
 
         transcription = transcription.replace("clean your car at the car wash", "clean your bar at the car wash")
 
