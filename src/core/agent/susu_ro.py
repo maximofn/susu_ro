@@ -31,7 +31,7 @@ os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_ENDPOINT = "https://models.github.ai/inference"
 
-PRINT_DEBUG = False
+PRINT_DEBUG = True
 
 # State
 class State(TypedDict):
@@ -289,31 +289,24 @@ Focus on the analytical and methodological aspects of transcription improvement.
         Returns:
             str: The corrected transcription text
         """
-        correction_prompt = f"""You are a minimal transcription corrector. Your task is to fix ONLY clear transcription errors while preserving the original meaning and wording as much as possible.
+        correction_prompt = f"""Fix only clear transcription errors in this text. Keep the original wording and meaning intact.
 
-Original transcription: "{transcription}"
+Original text: "{transcription}"
 
-CRITICAL RULES:
-1. **Minimal Corrections Only**: Only fix obvious transcription errors, not stylistic choices
-2. **Preserve Original Wording**: Keep the original vocabulary and phrasing unless there's a clear error
-3. **Focus on Clear Errors**: Fix only these types of problems:
-   - Garbled text like "NAM" that should be "Mom"
-   - Obvious homophones like "can't" when context clearly means "can"
-   - Broken sentence structure from transcription errors
-   - Missing punctuation that affects meaning
+Fix only these types of errors:
+1. **Garbled words**: Fix nonsensical text that should be real words
+2. **Wrong homophones**: Fix words that sound similar but are contextually wrong
+3. **Negatives**: Fix "can't" to "can" when context is clearly positive
+4. **Broken sentences**: Fix sentence structure that doesn't make grammatical sense
+5. **Missing punctuation**: Add quotes for dialogue and basic punctuation
 
-4. **DO NOT Change**:
-   - Correctly spelled words even if synonyms exist (keep "difficult" not "dangerous")
-   - Appropriate word choices (keep "share" not "show")
-   - Complete sentences that make sense
-   - Proper grammar that is already correct
+Preserve everything else:
+- Keep all correctly spelled words even if you might prefer synonyms
+- Keep the original vocabulary choices
+- Keep the same sentence structure when it's already correct
+- Don't change writing style or word preferences
 
-5. **Grammar and Punctuation**: Add proper punctuation and fix sentence structure only when broken
-
-**Example of what TO fix**: "her mam and said, NAM, I found" → "her mom and said, 'Mom, I found'"
-**Example of what NOT to fix**: "difficult to play" → DO NOT change to "dangerous to play"
-
-Return ONLY the minimally corrected transcription text, preserving as much of the original as possible."""
+Return only the corrected text:"""
         
         correction_message = HumanMessage(content=correction_prompt)
         response_content = self.stream_llm_response([correction_message], use_tools=False, function_name="apply_transcription_corrections")
@@ -345,37 +338,26 @@ Return ONLY the minimally corrected transcription text, preserving as much of th
             State: Updated state with evaluation result ("GOOD" or "RETRY").
         """
         # Define system prompt for intelligent transcription evaluation
-        evaluator_system_prompt = SystemMessage(content="""You are a transcription quality evaluator focused on identifying clear transcription errors while being conservative about corrections.
+        evaluator_system_prompt = SystemMessage(content="""Evaluate this transcription for clear transcription errors only.
 
-When evaluating a transcription, focus ONLY on these critical issues:
+Consider these as errors requiring RETRY:
+1. **Garbled text**: Nonsensical words or letter combinations that aren't real words
+2. **Context homophones**: Words that sound similar but are clearly wrong in context
+3. **Wrong negatives**: "can't" when context clearly means "can" (positive meaning)
+4. **Broken grammar**: Sentence fragments or structure that doesn't make sense
+5. **Missing dialogue punctuation**: Speech without proper quotes when clearly dialogue
 
-1. **Clear Transcription Errors**:
-   - Garbled or nonsensical text (like "NAM" instead of "Mom")
-   - Obviously wrong homophones based on context ("can't" when "can" is clearly intended)
-   - Broken sentence structure from transcription failures
-   - Missing or incorrect punctuation that breaks meaning
+DO NOT consider as errors:
+- Word choices that are correct but could be different
+- Complete sentences with proper grammar
+- Repetitive but meaningful language
+- Style preferences
 
-2. **Grammatical Coherence**:
-   - Incomplete or fragmented sentences
-   - Missing quotation marks for dialogue
-   - Run-on sentences that should be separated
+Standards:
+- GOOD: Transcription conveys clear meaning with proper grammar
+- RETRY: Contains obvious transcription failures that impair understanding
 
-3. **Word Recognition Issues**:
-   - Obvious misheard words that create meaningless text
-   - Names or common words that are clearly wrong ("mam" vs "mom")
-
-**IMPORTANT - DO NOT Flag These as Errors**:
-   - Word choices that are correct but you might prefer differently (e.g., "difficult" vs "dangerous")
-   - Appropriate vocabulary choices (e.g., "share" is fine, don't require "show")
-   - Grammatically correct sentences even if they could be phrased differently
-   - Repetitive but correct language patterns
-
-**Quality Standards**:
-- A transcription is GOOD if it conveys the meaning clearly without obvious errors
-- Only mark RETRY if there are clear transcription failures, not stylistic preferences
-- Be conservative - err on the side of accepting rather than over-correcting
-
-Provide your evaluation as either "GOOD" or "RETRY" at the end of your analysis.""")
+Provide brief analysis then end with: GOOD or RETRY""")
         
         transcription = state["transcription"]
 
