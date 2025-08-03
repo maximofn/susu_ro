@@ -31,6 +31,8 @@ os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_ENDPOINT = "https://models.github.ai/inference"
 
+PRINT_DEBUG = False
+
 # State
 class State(TypedDict):
     """
@@ -118,30 +120,30 @@ class SusuRo():
         
         # Display the graph
         try:
-            print(self.graph.get_graph().draw_ascii())
+            if PRINT_DEBUG: print(self.graph.get_graph().draw_ascii())
         except Exception as e:
-            print(f"Error al visualizar el grafo: {e}")
+            if PRINT_DEBUG: print(f"Error al visualizar el grafo: {e}")
         
         # Save the graph as PNG
         try:
             self.graph.get_graph().draw_mermaid_png(output_file_path="susu_ro_graph.png")
-            print("Graph saved as 'susu_ro_graph.png'")
+            if PRINT_DEBUG: print("Graph saved as 'susu_ro_graph.png'")
         except Exception as e:
-            print(f"Error al guardar el grafo como PNG: {e}")
+            if PRINT_DEBUG: print(f"Error al guardar el grafo como PNG: {e}")
     
     # Functions
     def print_initial_debug_block(self) -> None:
         """
         Print the state of the agent.
         """
-        print("\n\n")
-        print("+" * 100)
+        if PRINT_DEBUG: print("\n\n")
+        if PRINT_DEBUG: print("+" * 100)
     
     def print_end_debug_block(self) -> None:
         """
         Print the end of the debug block.
         """
-        print("-" * 100)
+        if PRINT_DEBUG: print("-" * 100)
     
     @traceable(run_type="llm")
     def stream_llm_response(self, messages: list, use_tools: bool = False, function_name: str = None) -> str:
@@ -164,24 +166,24 @@ class SusuRo():
         
         # Streaming enabled
         if function_name:
-            print(f"\t[{function_name}]\tresponse: ", end="", flush=True)
+            if PRINT_DEBUG: print(f"\t[{function_name}]\tresponse: ", end="", flush=True)
         else:
-            print("\tresponse: ", end="", flush=True)
+            if PRINT_DEBUG: print("\tresponse: ", end="", flush=True)
         full_response = ""
         
         try:
             for chunk in self.llm.stream(messages):
                 content = chunk.content
                 if content:
-                    print(content, end="", flush=True)
+                    if PRINT_DEBUG: print(content, end="", flush=True)
                     full_response += content
         except Exception as e:
-            print(f"\n❌ Streaming error: {e}")
+            if PRINT_DEBUG: print(f"\n❌ Streaming error: {e}")
             # Fallback to normal invocation
             response = llm.invoke(messages)
             return response.content
         
-        print()  # New line after streaming
+        if PRINT_DEBUG: print()  # New line after streaming
         return full_response
     
     @traceable(run_type="llm")
@@ -215,7 +217,7 @@ class SusuRo():
         last_message = input_messages[-1]
         is_from_tool = hasattr(last_message, 'tool_call_id')
         self.print_initial_debug_block()
-        print(f"\t[transcriptor_function] is_from_tool: {is_from_tool}")
+        if PRINT_DEBUG: print(f"\t[transcriptor_function] is_from_tool: {is_from_tool}")
         
         if is_from_tool:
             # If coming from tool, store transcription separately from logic
@@ -238,7 +240,7 @@ Focus on the analytical and contextual aspects of the transcription work.""")
         else:
             # Check if this is the initial request to transcribe audio
             is_first_message = state["first_message"]
-            print(f"\t[transcriptor_function] [state] is first message: {is_first_message}")
+            if PRINT_DEBUG: print(f"\t[transcriptor_function] [state] is first message: {is_first_message}")
             if is_first_message:
                 # This is an initial transcription request, use the transcriptor with tools
                 system_prompt = SystemMessage(content="""You are an audio transcriptor with access to transcription tools. When asked to transcribe audio, you must use the transcribe tool with the provided audio file path.
@@ -287,29 +289,31 @@ Focus on the analytical and methodological aspects of transcription improvement.
         Returns:
             str: The corrected transcription text
         """
-        correction_prompt = f"""You are a contextual transcription corrector. Your task is to correct the following transcription by identifying and fixing contextual errors.
+        correction_prompt = f"""You are a minimal transcription corrector. Your task is to fix ONLY clear transcription errors while preserving the original meaning and wording as much as possible.
 
 Original transcription: "{transcription}"
 
-Instructions:
-1. **Contextual Analysis**: Analyze the overall context and subject matter of the text
-2. **Semantic Coherence**: Check if each word makes logical sense in its specific context
-3. **Homophone Detection**: Look for words that sound similar but are contextually incorrect:
-   - "bar" vs "car" in automotive contexts
-   - "bear" vs "beer" in drinking contexts
-   - "there" vs "their" vs "they're" in appropriate contexts
-4. **Action-Object Matching**: Ensure actions match their logical objects:
-   - "clean your car" not "clean your bar" at a car wash
-   - "raise the bridge" not "raise the fridge" in infrastructure contexts
-5. **Domain-Specific Corrections**: Fix technical terms and specialized vocabulary:
-   - Brand names should be spelled correctly
-   - Product terminology should be accurate
-   - Technical jargon should match the domain context
-6. **Logical Consistency**: Verify that the sequence of actions and descriptions makes logical sense
+CRITICAL RULES:
+1. **Minimal Corrections Only**: Only fix obvious transcription errors, not stylistic choices
+2. **Preserve Original Wording**: Keep the original vocabulary and phrasing unless there's a clear error
+3. **Focus on Clear Errors**: Fix only these types of problems:
+   - Garbled text like "NAM" that should be "Mom"
+   - Obvious homophones like "can't" when context clearly means "can"
+   - Broken sentence structure from transcription errors
+   - Missing punctuation that affects meaning
 
-**Critical Focus**: Pay special attention to words that might be phonetically similar but contextually wrong. For example, in a context about vehicles or car washes, "bar" should likely be "car".
+4. **DO NOT Change**:
+   - Correctly spelled words even if synonyms exist (keep "difficult" not "dangerous")
+   - Appropriate word choices (keep "share" not "show")
+   - Complete sentences that make sense
+   - Proper grammar that is already correct
 
-Return ONLY the corrected transcription text, nothing else."""
+5. **Grammar and Punctuation**: Add proper punctuation and fix sentence structure only when broken
+
+**Example of what TO fix**: "her mam and said, NAM, I found" → "her mom and said, 'Mom, I found'"
+**Example of what NOT to fix**: "difficult to play" → DO NOT change to "dangerous to play"
+
+Return ONLY the minimally corrected transcription text, preserving as much of the original as possible."""
         
         correction_message = HumanMessage(content=correction_prompt)
         response_content = self.stream_llm_response([correction_message], use_tools=False, function_name="apply_transcription_corrections")
@@ -341,40 +345,37 @@ Return ONLY the corrected transcription text, nothing else."""
             State: Updated state with evaluation result ("GOOD" or "RETRY").
         """
         # Define system prompt for intelligent transcription evaluation
-        evaluator_system_prompt = SystemMessage(content="""You are an intelligent transcription evaluator specialized in detecting contextual errors. Your role is to analyze transcription quality with focus on semantic coherence and contextual accuracy.
+        evaluator_system_prompt = SystemMessage(content="""You are a transcription quality evaluator focused on identifying clear transcription errors while being conservative about corrections.
 
-When evaluating a transcription, you should:
+When evaluating a transcription, focus ONLY on these critical issues:
 
-1. **Contextual Semantic Analysis**: Check if words make logical sense in their specific context
-   - Look for homophones or similar-sounding words that might be incorrect (e.g., "bar" vs "car" in automotive contexts)
-   - Verify that actions match their logical objects (e.g., "clean your car" not "clean your bar" at a car wash)
-   - Check for technical terms that might be misheard in their domain context
+1. **Clear Transcription Errors**:
+   - Garbled or nonsensical text (like "NAM" instead of "Mom")
+   - Obviously wrong homophones based on context ("can't" when "can" is clearly intended)
+   - Broken sentence structure from transcription failures
+   - Missing or incorrect punctuation that breaks meaning
 
-2. **Logical Coherence Verification**: Ensure the transcription makes logical sense
-   - Actions should be appropriate for the described setting
-   - Objects should be relevant to the context being described
-   - Sequential actions should follow logical progression
+2. **Grammatical Coherence**:
+   - Incomplete or fragmented sentences
+   - Missing quotation marks for dialogue
+   - Run-on sentences that should be separated
 
-3. **Common Transcription Error Patterns**: Watch for typical STT mistakes
-   - Similar-sounding words with different meanings
-   - Contextually inappropriate word substitutions
-   - Technical terminology that might be misheard as common words
+3. **Word Recognition Issues**:
+   - Obvious misheard words that create meaningless text
+   - Names or common words that are clearly wrong ("mam" vs "mom")
 
-4. **Domain-Specific Accuracy**: Pay attention to context-specific vocabulary
-   - Product descriptions should use appropriate terminology
-   - Technical contexts require precise vocabulary
-   - Marketing language should be coherent and purposeful
+**IMPORTANT - DO NOT Flag These as Errors**:
+   - Word choices that are correct but you might prefer differently (e.g., "difficult" vs "dangerous")
+   - Appropriate vocabulary choices (e.g., "share" is fine, don't require "show")
+   - Grammatically correct sentences even if they could be phrased differently
+   - Repetitive but correct language patterns
 
-5. **Quality Assessment Methodology**: 
-   - Analyze each sentence for internal consistency
-   - Check if word choices align with the described context
-   - Verify that specialized terms are used correctly
+**Quality Standards**:
+- A transcription is GOOD if it conveys the meaning clearly without obvious errors
+- Only mark RETRY if there are clear transcription failures, not stylistic preferences
+- Be conservative - err on the side of accepting rather than over-correcting
 
-**Critical Check**: If you find words that don't make logical sense in their context (like "clean your bar at the car wash" instead of "clean your car at the car wash"), this indicates a contextual transcription error that requires correction.
-
-Your response should focus on the analytical and methodological aspects of transcription evaluation, providing insights about quality assessment rather than the transcription content itself.
-
-At the end of your analysis, provide your evaluation as either "GOOD" or "RETRY".""")
+Provide your evaluation as either "GOOD" or "RETRY" at the end of your analysis.""")
         
         transcription = state["transcription"]
 
@@ -413,16 +414,24 @@ Provide your analytical assessment of the transcription quality.""")
         response_content = last_message.content.strip().upper()
 
         self.print_initial_debug_block()
-        print(f"\t[evaluator_decision] return: good") if "GOOD" in response_content else print(f"\t[evaluator_decision] return: retry")
-        self.print_end_debug_block()
         
-        if "GOOD" in response_content:
-            print(f"\t[evaluator_decision] final transcription: {state['transcription']}")
-            return "good"
-        elif "RETRY" in response_content:
+        # More robust checking for GOOD or RETRY
+        if "RETRY" in response_content:
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] return: retry")
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] found 'RETRY' in response")
+            self.print_end_debug_block()
             return "retry"
+        elif "GOOD" in response_content:
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] return: good")
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] found 'GOOD' in response")
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] final transcription: {state['transcription']}")
+            self.print_end_debug_block()
+            return "good"
         else:
             # Default to retry if response is unclear
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] return: retry (default - no clear GOOD or RETRY found)")
+            if PRINT_DEBUG: print(f"\t[evaluator_decision] response content: {response_content[:100]}...")
+            self.print_end_debug_block()
             return "retry"
     
     @traceable(run_type="tool")
@@ -440,8 +449,8 @@ Provide your analytical assessment of the transcription quality.""")
         transcription = self.stt.transcribe(audio_path, language)
         
         self.print_initial_debug_block()
-        print(f"\t[stt_function] audio_path: {audio_path}")
-        print(f"\t[stt_function] transcription: {transcription}")
+        if PRINT_DEBUG: print(f"\t[stt_function] audio_path: {audio_path}")
+        if PRINT_DEBUG: print(f"\t[stt_function] transcription: {transcription}")
         self.print_end_debug_block()
 
         return transcription
