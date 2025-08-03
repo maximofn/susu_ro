@@ -1,5 +1,4 @@
 from core.agent.susu_ro import SusuRo
-from core.stt.whisper import Whisper
 
 def main():
     prompt = "Transcribe el audio data/MicroMachines.mp3"
