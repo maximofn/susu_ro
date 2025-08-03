@@ -24,7 +24,6 @@ class Whisper:
         self.device = device
         try:
             self.model = whisper.load_model(model_size, device=device)
-            print(f"Whisper model loaded successfully on {device}")
         except (NotImplementedError, RuntimeError) as e:
             if device == "mps":
                 warnings.warn(
