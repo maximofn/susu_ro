@@ -6,6 +6,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
  
 from langchain_ollama.chat_models import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from langsmith import traceable
@@ -27,6 +28,9 @@ os.environ["LANGSMITH_API_KEY"] = LANGSMITH_API_KEY
 os.environ["LANGSMITH_ENDPOINT"] = LANGSMITH_ENDPOINT
 os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
 
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_ENDPOINT = "https://models.github.ai/inference"
+
 # State
 class State(TypedDict):
     """
@@ -39,7 +43,7 @@ class State(TypedDict):
 class SusuRo():
     def __init__(
             self,
-            chat_model: str = "qwen3:8b",
+            chat_model: str = "qwen3:4b",
             chat_reasoning: bool = False,
             whisper_model_size: str = "large",
             whisper_device: str = "auto",
@@ -59,7 +63,12 @@ class SusuRo():
             None
         """
         # Create llm model
-        self.llm = ChatOllama(model=chat_model, reasoning=chat_reasoning)
+        if "gpt" in chat_model or "o3" in chat_model:
+            if not GITHUB_TOKEN:
+                raise ValueError("GITHUB_TOKEN environment variable is required for GitHub Models")
+            self.llm = ChatOpenAI(model=chat_model, base_url=GITHUB_ENDPOINT, api_key=GITHUB_TOKEN)
+        else:
+            self.llm = ChatOllama(model=chat_model, reasoning=chat_reasoning)
         
         # Enable streaming
         self.enable_streaming = enable_streaming
@@ -408,6 +417,7 @@ Provide your analytical assessment of the transcription quality.""")
         self.print_end_debug_block()
         
         if "GOOD" in response_content:
+            print(f"\t[evaluator_decision] final transcription: {state['transcription']}")
             return "good"
         elif "RETRY" in response_content:
             return "retry"
@@ -433,8 +443,6 @@ Provide your analytical assessment of the transcription quality.""")
         print(f"\t[stt_function] audio_path: {audio_path}")
         print(f"\t[stt_function] transcription: {transcription}")
         self.print_end_debug_block()
-
-        transcription = transcription.replace("clean your car at the car wash", "clean your bar at the car wash")
 
         return transcription
     
