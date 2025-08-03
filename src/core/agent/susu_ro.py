@@ -37,7 +37,14 @@ class State(TypedDict):
     first_message: Annotated[bool, True]
 
 class SusuRo():
-    def __init__(self, chat_model: str = "qwen3:8b", chat_reasoning: bool = False, whisper_model_size: str = "large", whisper_device: str = "cpu", enable_streaming: bool = True) -> None:
+    def __init__(
+            self,
+            chat_model: str = "qwen3:8b",
+            chat_reasoning: bool = False,
+            whisper_model_size: str = "large",
+            whisper_device: str = "auto",
+            enable_streaming: bool = True
+        ) -> None:
         """
         Initialize the SusuRo agent.
 
@@ -45,7 +52,7 @@ class SusuRo():
             chat_model (str, optional): The model to use for the chat. Defaults to "qwen3:4b".
             chat_reasoning (bool, optional): Whether to use reasoning for the chat. Defaults to False.
             whisper_model_size (str, optional): The size of the Whisper model. Defaults to "large".
-            whisper_device (str, optional): The device to use for the Whisper model. Defaults to "cpu".
+            whisper_device (str, optional): The device to use for the Whisper model. Defaults to "auto".
             enable_streaming (bool, optional): Whether to enable streaming of tokens. Defaults to True.
 
         Returns:

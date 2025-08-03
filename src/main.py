@@ -3,7 +3,7 @@ from core.agent.susu_ro import SusuRo
 def main():
     prompt = "Transcribe el audio data/MicroMachines.mp3"
 
-    susu = SusuRo(whisper_model_size="tiny")
+    susu = SusuRo(whisper_model_size="tiny", whisper_device="cpu")  # Use CPU for Whisper to avoid MPS compatibility issues
 
     messages = susu(prompt)
     
