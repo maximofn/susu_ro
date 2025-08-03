@@ -148,7 +148,7 @@ class SusuRo():
     @traceable(run_type="llm")
     def stream_llm_response(self, messages: list, use_tools: bool = False, function_name: str = None) -> str:
         """
-        Stream LLM response with real-time token display.
+        Stream LLM response with real-time token display, including reasoning tokens.
         
         Args:
             messages: List of messages to send to the LLM
@@ -169,21 +169,46 @@ class SusuRo():
             if PRINT_DEBUG: print(f"\t[{function_name}]\tresponse: ", end="", flush=True)
         else:
             if PRINT_DEBUG: print("\tresponse: ", end="", flush=True)
+        
         full_response = ""
+        reasoning_content = ""
+        in_reasoning_phase = False
         
         try:
             for chunk in self.llm.stream(messages):
+                
+                # Print reasoning content
+                if hasattr(chunk, 'additional_kwargs'):
+                    additional_kwargs = chunk.additional_kwargs
+                    if 'reasoning_content' in additional_kwargs:
+                        reasoning_text = additional_kwargs['reasoning_content']
+                        if reasoning_text and PRINT_DEBUG:
+                            if not in_reasoning_phase:
+                                print(f"\n🤔 [REASONING] ", end="", flush=True)
+                                in_reasoning_phase = True
+                            print(reasoning_text, end="", flush=True)
+                            reasoning_content += reasoning_text
+                
+                # Handle regular content tokens
                 content = chunk.content
                 if content:
-                    if PRINT_DEBUG: print(content, end="", flush=True)
+                    # If we were in reasoning phase, switch to response phase
+                    if in_reasoning_phase and PRINT_DEBUG:
+                        print(f"\n💭 [RESPONSE] ", end="", flush=True)
+                        in_reasoning_phase = False
+                    
+                    if PRINT_DEBUG: 
+                        print(content, end="", flush=True)
                     full_response += content
+                
         except Exception as e:
             if PRINT_DEBUG: print(f"\n❌ Streaming error: {e}")
             # Fallback to normal invocation
-            response = llm.invoke(messages)
+            response = self.llm.invoke(messages)
             return response.content
         
         if PRINT_DEBUG: print()  # New line after streaming
+        
         return full_response
     
     @traceable(run_type="llm")
