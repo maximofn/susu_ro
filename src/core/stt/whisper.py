@@ -1,5 +1,6 @@
 import whisper
 import torch
+import warnings
 
 class Whisper:
     def __init__(self, model_size: str = "large", device: str = "auto"):
@@ -19,8 +20,30 @@ class Whisper:
             else:
                 device = "cpu"   # Fallback to CPU
         
+        # Try to load the model with the specified device, with fallback for MPS and CUDA compatibility issues
         self.device = device
-        self.model = whisper.load_model(model_size, device=device)
+        try:
+            self.model = whisper.load_model(model_size, device=device)
+            print(f"Whisper model loaded successfully on {device}")
+        except (NotImplementedError, RuntimeError) as e:
+            if device == "mps":
+                warnings.warn(
+                    f"⚠️ MPS backend failed due to compatibility issues. Falling back to CPU.\n"
+                    f"Error: {str(e)[:100]}..."
+                )
+                self.device = "cpu"
+                self.model = whisper.load_model(model_size, device="cpu")
+                print(f"✅ Whisper model loaded successfully on CPU (MPS fallback)")
+            elif device == "cuda":
+                warnings.warn(
+                    f"⚠️ CUDA backend failed due to compatibility issues. Falling back to CPU.\n"
+                    f"Error: {str(e)[:100]}..."
+                )
+                self.device = "cpu"
+                self.model = whisper.load_model(model_size, device="cpu")
+                print(f"✅ Whisper model loaded successfully on CPU (CUDA fallback)")
+            else:
+                raise e
 
     def transcribe(self, audio_path: str, language: str = None) -> str:
         """
