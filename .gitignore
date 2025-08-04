@@ -11,3 +11,4 @@ wheels/
 .env
 initial_transcription.md
 .DS_Store
+.vscode/launch.json
