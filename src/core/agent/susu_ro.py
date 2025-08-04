@@ -7,7 +7,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
  
 from langchain_ollama.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from langsmith import traceable
 
@@ -152,19 +152,26 @@ class SusuRo():
         
         Args:
             messages: List of messages to send to the LLM
-            use_tools: Whether to use tools (disables streaming)
+            use_tools: Whether to use tools (enables streaming with tool response)
             function_name: Optional name to display in debug output
             
         Returns:
             str or AIMessage: Complete response content or full message object if tools used
         """
-        if not self.enable_streaming or use_tools:
-            # Fallback to normal invocation when streaming disabled or tools needed
-            llm = self.transcriptor if use_tools else self.llm
+        # If llm can use tools, use the transcriptor
+        llm = self.transcriptor if use_tools else self.llm
+
+        # If streaming is disabled, use the normal invocation
+        if not self.enable_streaming:
+            # Fallback to normal invocation when streaming disabled
             response = llm.invoke(messages)
+            if PRINT_DEBUG and hasattr(response, 'additional_kwargs') and 'reasoning_content' in response.additional_kwargs:
+                print(f"\t[{function_name}] reasoning: {response.additional_kwargs['reasoning_content']}")
+            if PRINT_DEBUG and hasattr(response, 'content') and response.content:
+                print(f"\t[{function_name}] response: {response.content}")
             return response if use_tools else response.content
         
-        # Streaming enabled
+        # Streaming enabled - works for both with and without tools        
         if function_name:
             if PRINT_DEBUG: print(f"\t[{function_name}]\tresponse: ", end="", flush=True)
         else:
@@ -173,9 +180,19 @@ class SusuRo():
         full_response = ""
         reasoning_content = ""
         in_reasoning_phase = False
+        tool_calls = []
+        response_id = None
         
         try:
-            for chunk in self.llm.stream(messages):
+            for chunk in llm.stream(messages):
+                
+                # Capture response metadata
+                if hasattr(chunk, 'id') and chunk.id:
+                    response_id = chunk.id
+                
+                # Handle tool calls
+                if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
+                    tool_calls.extend(chunk.tool_calls)
                 
                 # Print reasoning content
                 if hasattr(chunk, 'additional_kwargs'):
@@ -204,10 +221,23 @@ class SusuRo():
         except Exception as e:
             if PRINT_DEBUG: print(f"\n❌ Streaming error: {e}")
             # Fallback to normal invocation
-            response = self.llm.invoke(messages)
-            return response.content
+            llm = self.transcriptor if use_tools else self.llm
+            response = llm.invoke(messages)
+            return response if use_tools else response.content
         
         if PRINT_DEBUG: print()  # New line after streaming
+        
+        # If tools were used, construct and return a complete AIMessage-like response
+        if use_tools:
+            # Create a complete response object similar to what invoke() would return
+            response = AIMessage(
+                content=full_response,
+                tool_calls=tool_calls,
+                id=response_id,
+                additional_kwargs={'reasoning_content': reasoning_content} if reasoning_content else {}
+            )
+            
+            return response
         
         return full_response
     
@@ -457,6 +487,7 @@ Provide your analytical assessment of the transcription quality.""")
         
         self.print_initial_debug_block()
         if PRINT_DEBUG: print(f"\t[stt_function] audio_path: {audio_path}")
+        if PRINT_DEBUG: print(f"\t[stt_function] language: {language}")
         if PRINT_DEBUG: print(f"\t[stt_function] transcription: {transcription}")
         self.print_end_debug_block()
 
