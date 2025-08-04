@@ -1,11 +1,12 @@
 from core.agent.susu_ro import SusuRo
 
 def main():
-    prompt = "Transcribe el audio /Users/macm1/Documents/proyectos/susu_ro/data/slprl__sTinyStories_01.wav"
+    prompt = "Transcribe el audio /Users/macm1/Documents/proyectos/susu_ro/data/slprl__sTinyStories_01.wav que está en inglés"
 
     whisper_model_size = "tiny"
     whisper_device = "cpu"   # Use CPU for Whisper to avoid MPS compatibility issues
-    chat_model = "openai/gpt-4.1"
+    chat_model = "qwen3:4b"
+    # chat_model = "openai/gpt-4.1"
     chat_reasoning = True
     enable_streaming = True
 
