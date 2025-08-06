@@ -44,7 +44,7 @@ class Whisper:
             else:
                 raise e
 
-    def transcribe(self, audio_path: str, language: str = None) -> str:
+    def transcribe(self, audio_path: str, word_timestamps: bool = False, language: str = None) -> str:
         """
         Transcribe an audio file using the Whisper model.
 
@@ -59,5 +59,7 @@ class Whisper:
             "language": language,
             "fp16": True if self.device in ["cuda", "mps"] else False,
         }
-        result = self.model.transcribe(audio_path, **decode_options)
-        return result["text"]
+        result = self.model.transcribe(audio_path, word_timestamps=word_timestamps, **decode_options)
+        transcription = result["text"]
+        segments = result["segments"]
+        return transcription, segments

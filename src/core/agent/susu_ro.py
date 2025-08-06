@@ -7,12 +7,15 @@ from langgraph.prebuilt import ToolNode, tools_condition
  
 from langchain_ollama.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI
+from langchain_openai.chat_models.base import BaseChatOpenAI
+from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from langsmith import traceable
 
 from core.stt.whisper import Whisper
 
+import json
 import os
 from dotenv import load_dotenv
 
@@ -40,6 +43,7 @@ class State(TypedDict):
     """
     messages: Annotated[list, add_messages]
     transcription: Annotated[str, ""]
+    word_timestamps: Annotated[list, []]
     first_message: Annotated[bool, True]
 
 class SusuRo():
@@ -68,7 +72,13 @@ class SusuRo():
         if "gpt" in chat_model or "o3" in chat_model:
             if not GITHUB_TOKEN:
                 raise ValueError("GITHUB_TOKEN environment variable is required for GitHub Models")
-            self.llm = ChatOpenAI(model=chat_model, base_url=GITHUB_ENDPOINT, api_key=GITHUB_TOKEN)
+            # self.llm = ChatOpenAI(model=chat_model, base_url=GITHUB_ENDPOINT, api_key=GITHUB_TOKEN)
+            self.llm = BaseChatOpenAI(
+                model_name=chat_model, 
+                openai_api_base=GITHUB_ENDPOINT, 
+                openai_api_key=GITHUB_TOKEN
+            )
+            # self.llm = AzureAIChatCompletionsModel(model=chat_model, endpoint=GITHUB_ENDPOINT, credential=GITHUB_TOKEN)
         else:
             self.llm = ChatOllama(model=chat_model, reasoning=chat_reasoning)
         
@@ -275,23 +285,37 @@ class SusuRo():
         if PRINT_DEBUG: print(f"\t[transcriptor_function] is_from_tool: {is_from_tool}")
         
         if is_from_tool:
-            # If coming from tool, store transcription separately from logic
-            transcription_result = last_message.content
+            # If coming from tool, parse the structured result containing transcription and timestamps
+            try:
+                tool_result = json.loads(last_message.content)
+                transcription_result = tool_result.get("transcription", "")
+                word_timestamps = tool_result.get("word_timestamps", [])
+                total_words = tool_result.get("total_words", 0)
+                duration = tool_result.get("duration", 0)
+                
+                if PRINT_DEBUG: 
+                    print(f"\t[transcriptor_function] Parsed transcription with {total_words} words, duration: {duration:.2f}s")
+            except json.JSONDecodeError:
+                # Fallback to treating content as plain text (for backward compatibility)
+                transcription_result = last_message.content
+                word_timestamps = []
+                if PRINT_DEBUG: print(f"\t[transcriptor_function] Using fallback parsing for tool result")
             
             literal_prompt = SystemMessage(content="""You are an audio transcriptor. Your role is to provide analysis and context about the transcription process.
 
 When you receive a transcription result from the transcribe tool, you must:
 1. Analyze the transcription quality and provide context
 2. Discuss the transcription process and methodology
-3. Provide insights about the audio content structure
-4. Do not include the actual transcribed text in your response
+3. Provide insights about the audio content structure, including timing information when available
+4. Comment on word-level timing accuracy and audio segmentation
+5. Do not include the actual transcribed text in your response
 
-Focus on the analytical and contextual aspects of the transcription work.""")
+Focus on the analytical and contextual aspects of the transcription work, including temporal analysis.""")
             
             messages_with_system = [literal_prompt] + input_messages
             response = self.stream_llm_response(messages_with_system, use_tools=False, function_name="transcriptor_function")
             self.print_end_debug_block()
-            return {"messages": [response], "transcription": transcription_result, "first_message": False}
+            return {"messages": [response], "transcription": transcription_result, "word_timestamps": word_timestamps, "first_message": False}
         else:
             # Check if this is the initial request to transcribe audio
             is_first_message = state["first_message"]
@@ -310,7 +334,7 @@ Use the transcribe tool now.""")
                 messages_with_system = [system_prompt] + input_messages
                 response = self.stream_llm_response(messages_with_system, use_tools=True, function_name="transcriptor_function")
                 self.print_end_debug_block()
-                return {"messages": [response], "transcription": transcription, "first_message": False}
+                return {"messages": [response], "transcription": transcription, "word_timestamps": state.get("word_timestamps", []), "first_message": False}
             else:
                 # If coming from evaluator (retry), perform context-aware correction
                 correction_prompt = SystemMessage(content="""You are an intelligent transcription analyst. Your role is to analyze and discuss transcription improvements.
@@ -331,7 +355,7 @@ Focus on the analytical and methodological aspects of transcription improvement.
                 response_content = self.stream_llm_response(messages_with_system, use_tools=False, function_name="transcriptor_function")
                 response = type(input_messages[-1])(content=response_content)
                 self.print_end_debug_block()
-                return {"messages": [response], "transcription": corrected_transcription, "first_message": False}
+                return {"messages": [response], "transcription": corrected_transcription, "word_timestamps": state.get("word_timestamps", []), "first_message": False}
     
     @traceable(run_type="llm")
     def _apply_transcription_corrections(self, transcription: str) -> str:
@@ -430,7 +454,7 @@ Provide your analytical assessment of the transcription quality.""")
         response_content = self.stream_llm_response(messages_with_system, use_tools=False, function_name="evaluator_function")
         response = type(evaluation_prompt)(content=response_content)
         self.print_end_debug_block()
-        return {"messages": [response], "transcription": transcription, "first_message": False}
+        return {"messages": [response], "transcription": transcription, "word_timestamps": state.get("word_timestamps", []), "first_message": False}
     
     @traceable(run_type="llm")
     def evaluator_decision(self, state: State) -> str:
@@ -481,17 +505,45 @@ Provide your analytical assessment of the transcription quality.""")
             language (str, optional): Language code for transcription. Defaults to None.
 
         Returns:
-            str: The transcribed text from the audio file.
+            str: JSON formatted string containing the transcribed text and word timestamps.
         """
-        transcription = self.stt.transcribe(audio_path, language)
-        
+        # Print debug information
         self.print_initial_debug_block()
         if PRINT_DEBUG: print(f"\t[stt_function] audio_path: {audio_path}")
         if PRINT_DEBUG: print(f"\t[stt_function] language: {language}")
+
+        # Transcribe the audio
+        transcription, segments = self.stt.transcribe(audio_path, word_timestamps=True, language=language)
         if PRINT_DEBUG: print(f"\t[stt_function] transcription: {transcription}")
+
+        # Get word timestamps
+        word_timestamps = []
+        for segment in segments:
+            if 'words' in segment:
+                for word in segment['words']:
+                    word_text = word['word']
+                    word_start = word['start']
+                    word_end = word['end']
+                    word_timestamps.append({
+                        "word": word_text,
+                        "start": word_start,
+                        "end": word_end
+                    })
+                    if PRINT_DEBUG: print(f"\t[stt_function] word: {word_text} - start: {word_start} - end: {word_end}")
+        
+        # Create structured result with both transcription and timestamps
+        result = {
+            "transcription": transcription,
+            "word_timestamps": word_timestamps,
+            "total_words": len(word_timestamps),
+            "duration": word_timestamps[-1]["end"] if word_timestamps else 0
+        }
+        
+        result_json = json.dumps(result, ensure_ascii=False, indent=2)
+        if PRINT_DEBUG: print(f"\t[stt_function] returning structured result with {len(word_timestamps)} words")
         self.print_end_debug_block()
 
-        return transcription
+        return result_json
     
     # Invoke 
     def __call__(self, prompt: str) -> list[HumanMessage]:
@@ -505,7 +557,7 @@ Provide your analytical assessment of the transcription quality.""")
             list[HumanMessage]: The messages from the agent.
         """
         messages = [HumanMessage(content=prompt)]
-        state = {"messages": messages, "transcription": "", "first_message": True}
+        state = {"messages": messages, "transcription": "", "word_timestamps": [], "first_message": True}
 
         result = self.graph.invoke(state, {"number": None})
         
